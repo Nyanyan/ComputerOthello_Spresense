@@ -215,10 +215,10 @@ def collect_data(num, s):
     elif result < 0:
         result -= 64 - sum(rv.nums)
     idx = 0
-    with open('data/data_val.csv', 'a') as f:
+    with open('data/data.csv', 'a') as f:
         for img0, img1, player, policy in grids:
-            file0 = 'img_val/' + digit(num, 7) + '_' + digit(idx, 2) + '_0.png'
-            file1 = 'img_val/' + digit(num, 7) + '_' + digit(idx, 2) + '_1.png'
+            file0 = 'img/' + digit(num, 7) + '_' + digit(idx, 2) + '_0.png'
+            file1 = 'img/' + digit(num, 7) + '_' + digit(idx, 2) + '_1.png'
             f.write('./' + file0 + ',' + './' + file1 + ',' + str(policy) + ',' + str(result / 64 if player == 0 else -result / 64) + '\n')
             img0.save('data/' + file0)
             img1.save('data/' + file1)
@@ -226,7 +226,7 @@ def collect_data(num, s):
 
 games = []
 
-for i in range(54, 55):
+for i in range(53, 54):
     raw_data = ''
     with open('data/raw/' + digit(i, 7) + '.txt', 'r') as f:
         raw_data = f.read()

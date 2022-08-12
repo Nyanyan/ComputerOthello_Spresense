@@ -1,9 +1,6 @@
 #include "SPI.h"
 #include "Adafruit_GFX.h"
 #include "Adafruit_ILI9341.h"
-#include <DNNRT.h>
-#include <Flash.h>
-#include <File.h>
 
 #define TFT_DC 15
 #define TFT_CS -1
@@ -34,10 +31,6 @@
 
 #define MAX_LEVEL 3
 
-#define FILLED 1.0
-#define MAX_N_NODES 2500
-#define MAX_N_CHILDREN 34
-
 const int button_com[5] = {28, 27, 26, 25, 22};
 const int button_rec[4] = {21, 20, 19, 18};
 
@@ -45,18 +38,6 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(&SPI5, TFT_DC, TFT_CS, TFT_RST);
 
 int raw_level = 0;
 bool level_last_pressed = false;
-
-DNNRT dnnrt;
-DNNVariable input0(64);
-DNNVariable input1(64);
-
-inline void print_coord(int cell) {
-  cell = HW2_M1 - cell;
-  int x = cell % HW;
-  int y = cell / HW;
-  Serial.print((char)('A' + x));
-  Serial.print(y + 1);
-}
 
 inline void swap(uint64_t *x, uint64_t *y) {
   *x ^= *y;
@@ -386,8 +367,7 @@ void print_legal(Board *board);
 void print_board(Board *board, int player);
 void print_score(Board *board, int player);
 void show_score(Board *board, int player);
-void predict(Board *board, int player, float policies[HW2], float *value);
-int ai(Board *board, int level);
+int ai(Board *board);
 
 void print_grid() {
   tft.fillScreen(ILI9341_DARKGREEN);
@@ -549,9 +529,7 @@ int input_pos(uint64_t legal, int player) {
   if (pos >= 0) {
     if (1 & (legal >> pos)) {
       Serial.print("candidate: ");
-      //Serial.println(pos);
-      print_coord(pos);
-      Serial.println("");
+      Serial.println(pos);
       int b = input_button();
       while (b != -1)
         b = input_button();
@@ -586,177 +564,9 @@ void show_score(Board *board, int player) {
   }
 }
 
-void predict(Board *board, int player, float policies[HW2], float *value) {
-  int i;
-  float* buf0 = input0.data();
-  for (i = 0; i < HW2; ++i)
-    buf0[HW2_M1 - i] = FILLED * (1 & (board->player >> i));
-  float* buf1 = input1.data();
-  for (i = 0; i < HW2; ++i)
-    buf1[HW2_M1 - i] = FILLED * (1 & (board->opponent >> i));
-  /*
-    for (i = 0; i < HW2; ++i)
-    Serial.print((int)buf0[i]);
-    Serial.println("");
-    for (i = 0; i < HW2; ++i)
-    Serial.print((int)buf1[i]);
-    Serial.println("");
-  */
-  dnnrt.inputVariable(input0, 0);
-  dnnrt.inputVariable(input1, 1);
-  dnnrt.forward();
-  DNNVariable output0 = dnnrt.outputVariable(0);
-  DNNVariable output1 = dnnrt.outputVariable(1);
-  //board->print();
-  for (i = 0; i < HW2; ++i) {
-    /*
-      Serial.print(i);
-      Serial.print("\t");
-      Serial.println(output0[HW2_M1 - i]);
-    */
-    policies[i] = output0[HW2_M1 - i];
-  }
-  *value = (player == 0 ? -1.0 : 1.0) * output1[0];
-  //Serial.println(*value);
-}
-
-struct MCTS_node {
-  Board board;
-  float p;
-  float w;
-  int n;
-  int player;
-  MCTS_node* children[HW2];
-  bool has_child;
-
-  void init() {
-    p = -1;
-    w = 0.0;
-    n = 0;
-    player = 0;
-    for (int i = 0; i < HW2; ++i)
-      children[i] = NULL;
-    has_child = false;
-  }
-};
-
-float evaluate(MCTS_node *node);
-
-MCTS_node mcts_nodes[MAX_N_NODES];
-int mcts_n_nodes;
-
-float evaluate(MCTS_node *node) {
-  //node->board.print();
-  uint64_t legal = node->board.get_legal();
-  if (legal == 0) {
-    node->board.pass();
-    node->player ^= 1;
-    legal = node->board.get_legal();
-    if (legal == 0) {
-      float res = (float)node->board.score_player() / HW2;
-      node->w += res;
-      ++node->n;
-      return res;
-    }
-  }
-  if (!node->has_child) {
-    float policies[HW2];
-    float value;
-    predict(&node->board, node->player, policies, &value);
-    node->w += value;
-    ++node->n;
-    int i;
-    Flip flip;
-    //node->board.print();
-    //Serial.println(value);
-    for (i = 0; i < HW2; ++i) {
-      if (1 & (legal >> i)) {
-        //Serial.print(i);
-        //Serial.print("\t");
-        //Serial.println(policies[i]);
-        flip.calc_flip(node->board.player, node->board.opponent, i);
-        node->board.move_board(&flip);
-
-        mcts_nodes[mcts_n_nodes].init();
-        mcts_nodes[mcts_n_nodes].board.player = node->board.player;
-        mcts_nodes[mcts_n_nodes].board.opponent = node->board.opponent;
-        mcts_nodes[mcts_n_nodes].p = policies[i];
-        mcts_nodes[mcts_n_nodes].player = node->player ^ 1;
-        node->children[i] = &mcts_nodes[mcts_n_nodes];
-        ++mcts_n_nodes;
-
-        node->board.undo_board(&flip);
-      }
-    }
-    node->has_child = true;
-    return value;
-  }
-
-
-  float max_value = -10000.0, value;
-  int policy = -1;
-  int i;
-  float t = 0;
-  for (i = 0; i < HW2; ++i) {
-    if (node->children[i] != NULL)
-      t += (float)node->children[i]->n;
-  }
-  t = sqrt(t);
-  for (i = 0; i < HW2; ++i) {
-    if (node->children[i] != NULL) {
-      if (node->children[i]->n == 0)
-        value = 10000.0;
-      else
-        value = (node->children[i]->player == node->player ? 1.0 : -1.0) * node->children[i]->w / node->children[i]->n +
-                node->children[i]->p * t / (1 + node->children[i]->n);
-      if (max_value < value) {
-        max_value = value;
-        policy = i;
-      }
-    }
-  }
-  value = (node->children[policy]->player == node->player ? 1.0 : -1.0) * evaluate(node->children[policy]);
-  node->w += value;
-  ++node->n;
-  return value;
-}
-
-int ai(Board *board, int level) {
-  mcts_nodes[0].init();
-  mcts_nodes[0].board.player = board->player;
-  mcts_nodes[0].board.opponent = board->opponent;
-  mcts_nodes[0].player = 0;
-  mcts_n_nodes = 1;
-  int n_evaluate = 1000, i;
-  for (i = 0; i < n_evaluate && mcts_n_nodes < MAX_N_NODES - 34; ++i) {
-    //Serial.println(i);
-    evaluate(&mcts_nodes[0]);
-  }
-  Serial.print(mcts_n_nodes);
-  Serial.println(" nodes expanded");
-  int max_n = -1;
-  int policy = -1;
-  for (i = 0; i < HW2; ++i) {
-    if (mcts_nodes[0].children[i] != NULL) {
-      if (mcts_nodes[0].children[i]->n > max_n) {
-        //Serial.print(i);
-        print_coord(i);
-        Serial.print("\t");
-        Serial.print(mcts_nodes[0].children[i]->n);
-        Serial.print("\t");
-        Serial.println(mcts_nodes[0].children[i]->w / mcts_nodes[0].children[i]->n * HW2);
-        max_n = mcts_nodes[0].children[i]->n;
-        policy = i;
-      }
-    }
-  }
-  Serial.println("selected:");
-  print_coord(policy);
-  Serial.print("\t");
-  Serial.print(mcts_nodes[0].children[policy]->n);
-  Serial.print("\t");
-  Serial.println(mcts_nodes[0].children[policy]->w / mcts_nodes[0].children[policy]->n * HW2);
-  return policy;
+int ai(Board *board) {
+  uint64_t legal = board->get_legal();
+  return pop_count_ull((legal & -legal) - 1);
 }
 
 void play() {
@@ -812,16 +622,14 @@ void play() {
     Serial.println(ai_player);
     print_board(&board, player);
     if (player == ai_player) {
-      pos = ai(&board, level);
+      pos = ai(&board);
     } else {
       pos = -1;
       while (pos == -1)
         pos = input_pos(legal, player);
     }
     Serial.print("select: ");
-    //Serial.println(pos);
-    print_coord(pos);
-    Serial.println("\n");
+    Serial.println(pos);
     flip.calc_flip(board.player, board.opponent, pos);
     board.move_board(&flip);
     board.print();
@@ -840,16 +648,6 @@ void setup() {
     pinMode(button_com[i], OUTPUT);
   for (i = 0; i < 4; ++i)
     pinMode(button_rec[i], INPUT_PULLUP);
-  File nnbfile = Flash.open("model.nnb", FILE_READ);
-  if (!nnbfile) {
-    Serial.println("model.nnb is not found");
-    while (1);
-  }
-  int ret = dnnrt.begin(nnbfile);  // DNNRTを初期化
-  if (ret < 0) {
-    Serial.println("DNNRT begin fail: " + String(ret));
-    while (1);
-  }
   tft.begin(40000000);
   print_grid();
   print_info();
