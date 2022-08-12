@@ -183,8 +183,8 @@ def collect_data(num, s):
             #evaluate.stdin.flush()
             #add_data = evaluate.stdout.readline().decode().replace('\r\n', '')
             #if idx >= 24:
-            img0 = Image.new("L", (64, 64), 0)
-            img1 = Image.new("L", (64, 64), 0)
+            img0 = Image.new("L", (8, 8), 0)
+            img1 = Image.new("L", (8, 8), 0)
             for i in range(hw):
                 for j in range(hw):
                     if rv.grid[i][j] == 0:
@@ -215,18 +215,18 @@ def collect_data(num, s):
     elif result < 0:
         result -= 64 - sum(rv.nums)
     idx = 0
-    with open('data/data.csv', 'a') as f:
+    with open('data/data_val.csv', 'a') as f:
         for img0, img1, player, policy in grids:
-            file0 = './data/img/' + digit(num, 7) + '_' + digit(idx, 2) + '_0.png'
-            file1 = './data/img/' + digit(num, 7) + '_' + digit(idx, 2) + '_1.png'
-            f.write(file0 + ',' + file1 + ',' + str(policy) + ',' + str(result / 64 if player == 0 else -result / 64) + '\n')
-            img0.save(file0)
-            img1.save(file1)
+            file0 = 'img_val/' + digit(num, 7) + '_' + digit(idx, 2) + '_0.png'
+            file1 = 'img_val/' + digit(num, 7) + '_' + digit(idx, 2) + '_1.png'
+            f.write('./' + file0 + ',' + './' + file1 + ',' + str(policy) + ',' + str(result / 64 if player == 0 else -result / 64) + '\n')
+            img0.save('data/' + file0)
+            img1.save('data/' + file1)
             idx += 1
 
 games = []
 
-for i in range(55, 56):
+for i in range(54, 55):
     raw_data = ''
     with open('data/raw/' + digit(i, 7) + '.txt', 'r') as f:
         raw_data = f.read()
