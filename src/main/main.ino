@@ -2,9 +2,9 @@
 #include "Adafruit_GFX.h"
 #include "Adafruit_ILI9341.h"
 
-#define TFT_DC 9
+#define TFT_DC 15
 #define TFT_CS -1
-#define TFT_RST 8
+#define TFT_RST 14
 
 #define HW 8
 #define HW2 64
@@ -13,11 +13,33 @@
 #define CELL_SIZE 25
 #define BOARD_SIZE (CELL_SIZE * HW)
 #define BOARD_SX 20
-#define BOARD_SY 20
+#define BOARD_SY 50
 #define DOT_RADIUS 2
 #define DISC_RADIUS 10
+#define LEGAL_RADIUS 5
 
-inline void swap(uint64_t *x, uint64_t *y){
+#define SET_BUTTON 0
+#define PASS_BUTTON 1
+#define SCORE_BUTTON 2
+#define LEVEL_BUTTON 3
+#define BUTTON_X_MIN 12
+#define BUTTON_X_MAX 19
+#define BUTTON_Y_MIN 4
+#define BUTTON_Y_MAX 11
+
+#define FONT_PX 6
+
+#define MAX_LEVEL 3
+
+const int button_com[5] = {28, 27, 26, 25, 22};
+const int button_rec[4] = {21, 20, 19, 18};
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(&SPI5, TFT_DC, TFT_CS, TFT_RST);
+
+int raw_level = 0;
+bool level_last_pressed = false;
+
+inline void swap(uint64_t *x, uint64_t *y) {
   *x ^= *y;
   *y ^= *x;
   *x ^= *y;
@@ -37,7 +59,7 @@ class Flip {
     uint64_t flip;
 
   public:
-    uint64_t calc_flip(const uint64_t me, const uint64_t op, int cell) {
+    void calc_flip(const uint64_t me, const uint64_t op, int cell) {
       uint64_t rev = 0ULL;
       uint64_t rev2, mask;
       uint64_t pt = 1ULL << cell;
@@ -52,7 +74,8 @@ class Flip {
           rev |= rev2;
         }
       }
-      return rev;
+      pos = cell;
+      flip = rev;
     }
 
   private:
@@ -314,26 +337,37 @@ class Board {
     }
 };
 
+int input_button() {
+  int i, j, res = 0;
+  for (i = 0; i < 5; ++i) {
+    digitalWrite(button_com[i], HIGH);
+  }
+  for (i = 0; i < 5; ++i) {
+    digitalWrite(button_com[i], LOW);
+    for (j = 0; j < 4; ++j) {
+      if (!digitalRead(button_rec[j])) {
+        for (i = 0; i < 5; ++i) {
+          digitalWrite(button_com[i], LOW);
+        }
+        //Serial.println(res);
+        return res;
+      }
+      ++res;
+    }
+    digitalWrite(button_com[i], HIGH);
+  }
+  for (i = 0; i < 5; ++i) {
+    digitalWrite(button_com[i], LOW);
+  }
+  return -1;
+}
+
 void print_discs(Board *board, int player);
+void print_legal(Board *board);
+void print_board(Board *board, int player);
+void print_score(Board *board, int player);
 
-Adafruit_ILI9341 tft = Adafruit_ILI9341(&SPI, TFT_DC, TFT_CS, TFT_RST);
-
-void setup() {
-  Serial.begin(115200);
-  tft.begin(40000000);
-  print_board();
-  Board board;
-  board.reset();
-  board.print();
-  print_discs(&board, 0);
-}
-
-
-void loop(void) {
-
-}
-
-void print_board() {
+void print_grid() {
   tft.fillScreen(ILI9341_DARKGREEN);
   int i, x, y;
   for (i = 0; i < HW + 1; ++i) {
@@ -351,32 +385,234 @@ void print_board() {
   tft.setTextColor(ILI9341_BLACK);
   tft.setTextSize(1);
   for (i = 0; i < HW; ++i) {
-    tft.setCursor(30 + i * CELL_SIZE, 10);
+    tft.setCursor(30 + i * CELL_SIZE, 40);
     tft.print((char)('A' + i));
   }
   for (i = 0; i < HW; ++i) {
-    tft.setCursor(10, 30 + CELL_SIZE * i);
+    tft.setCursor(10, 50 + CELL_SIZE * i);
     tft.print((char)('1' + i));
   }
 }
 
 void print_discs(Board *board, int player) {
   int i, y, x;
-  for (i = 0; i < HW2; ++i){
+  for (i = 0; i < HW2; ++i) {
     x = HW_M1 - i % HW;
     y = HW_M1 - i / HW;
     x = BOARD_SX + x * CELL_SIZE + CELL_SIZE / 2 + 1;
     y = BOARD_SY + y * CELL_SIZE + CELL_SIZE / 2 + 1;
-    if (1 & (board->player >> i)){
+    if (1 & (board->player >> i)) {
       if (player == 0)
         tft.fillCircle(x, y, DISC_RADIUS, ILI9341_BLACK);
       else
         tft.fillCircle(x, y, DISC_RADIUS, ILI9341_WHITE);
-    } else if (1 & (board->opponent >> i)){
+    } else if (1 & (board->opponent >> i)) {
       if (player == 0)
         tft.fillCircle(x, y, DISC_RADIUS, ILI9341_WHITE);
       else
         tft.fillCircle(x, y, DISC_RADIUS, ILI9341_BLACK);
     }
+  }
+}
+
+void print_legal(Board *board) {
+  uint64_t legal = board->get_legal();
+  int i, y, x;
+  for (i = 0; i < HW2; ++i) {
+    x = HW_M1 - i % HW;
+    y = HW_M1 - i / HW;
+    x = BOARD_SX + x * CELL_SIZE + CELL_SIZE / 2 + 1;
+    y = BOARD_SY + y * CELL_SIZE + CELL_SIZE / 2 + 1;
+    if (1 & (legal >> i))
+      tft.fillCircle(x, y, LEGAL_RADIUS, ILI9341_CYAN);
+  }
+}
+
+void blink_place(int pos, bool state, int player) {
+  pos = HW2_M1 - pos;
+  int x = pos % HW;
+  int y = pos / HW;
+  x = BOARD_SX + x * CELL_SIZE + CELL_SIZE / 2 + 1;
+  y = BOARD_SY + y * CELL_SIZE + CELL_SIZE / 2 + 1;
+  if (state) {
+    if (player == 0)
+      tft.fillCircle(x, y, DISC_RADIUS, ILI9341_BLACK);
+    else
+      tft.fillCircle(x, y, DISC_RADIUS, ILI9341_WHITE);
+  } else {
+    tft.fillCircle(x, y, DISC_RADIUS, ILI9341_DARKGREEN);
+    tft.fillCircle(x, y, LEGAL_RADIUS, ILI9341_CYAN);
+  }
+}
+
+void print_score(Board *board, int player) {
+  int b_score, w_score;
+  if (player == 0) {
+    b_score = board->count_player();
+    w_score = board->count_opponent();
+  } else {
+    b_score = board->count_opponent();
+    w_score = board->count_player();
+  }
+  tft.setTextSize(1);
+
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setCursor(30, 20);
+  tft.print((char)('0' + b_score / 10));
+  tft.setCursor(30 + FONT_PX, 20);
+  tft.print((char)('0' + b_score % 10));
+
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(240 - 30 - FONT_PX * 2, 20);
+  tft.print((char)('0' + w_score / 10));
+  tft.setCursor(240 - 30 - FONT_PX, 20);
+  tft.print((char)('0' + w_score % 10));
+}
+
+void print_info() {
+  int level = raw_level / 2;
+  int ai_player = raw_level % 2;
+  tft.setTextSize(1);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setCursor(70, 15);
+  tft.print("Level ");
+  tft.setCursor(70 + FONT_PX * 6, 15);
+  tft.print((char)('1' + level));
+  tft.setCursor(70, 25);
+  if (ai_player == 0)
+    tft.print("AI plays Black");
+  else
+    tft.print("AI plays White");
+}
+
+void print_board(Board *board, int player) {
+  print_grid();
+  print_discs(board, player);
+  print_legal(board);
+  if (input_button() == SCORE_BUTTON)
+    print_score(board, player);
+  print_info();
+}
+
+int x_button_pressed() {
+  int b = input_button();
+  if (BUTTON_X_MIN <= b && b <= BUTTON_X_MAX)
+    return BUTTON_X_MAX - b;
+  else if (b != -1)
+    return -2;
+  return -1;
+}
+
+int y_button_pressed() {
+  int b = input_button();
+  if (BUTTON_Y_MIN <= b && b <= BUTTON_Y_MAX)
+    return BUTTON_Y_MAX - b;
+  else if (b != -1)
+    return -2;
+  return -1;
+}
+
+int get_pos_button() {
+  int x = -1, y = -1;
+  while (x < 0)
+    x = x_button_pressed();
+  while (y < 0)
+    y = y_button_pressed();
+  if (x < 0 || y < 0)
+    return -1;
+  return HW2_M1 - (y * HW + x);
+}
+
+int input_pos(uint64_t legal, int player) {
+  int pos = get_pos_button();
+  if (pos >= 0) {
+    if (1 & (legal >> pos)) {
+      Serial.print("candidate: ");
+      Serial.println(pos);
+      int b = input_button();
+      while (b != -1)
+        b = input_button();
+      unsigned long button_released = millis();
+      unsigned long past = millis(), now = millis();
+      bool blink_state = true;
+      blink_place(pos, blink_state, player);
+      while (b != SET_BUTTON) {
+        if (millis() - button_released >= 200 && BUTTON_Y_MIN <= b && b <= BUTTON_X_MAX)
+          return -1;
+        now = millis();
+        if (now - past >= 500) {
+          past = now;
+          blink_state ^= 1;
+          blink_place(pos, blink_state, player);
+        }
+        b = input_button();
+      }
+      return pos;
+    }
+  }
+  return -1;
+}
+
+void play() {
+  int level = raw_level / 2;
+  int ai_player = raw_level % 2;
+  int player = 0;
+  Board board;
+  board.reset();
+  print_board(&board, player);
+  uint64_t legal;
+  int pos;
+  Flip flip;
+  while (true) {
+    legal = board.get_legal();
+    if (legal == 0) {
+      board.pass();
+      player ^= 1;
+      legal = board.get_legal();
+      if (legal == 0){
+        player ^= 1;
+        break;
+      }
+    }
+    pos = -1;
+    while (pos == -1)
+      pos = input_pos(legal, player);
+    Serial.print("select: ");
+    Serial.println(pos);
+    flip.calc_flip(board.player, board.opponent, pos);
+    board.move_board(&flip);
+    board.print();
+    player ^= 1;
+    print_board(&board, player);
+  }
+  delay(1000);
+}
+
+void setup() {
+  Serial.begin(115200);
+  int i;
+  for (i = 0; i < 5; ++i)
+    pinMode(button_com[i], OUTPUT);
+  for (i = 0; i < 4; ++i)
+    pinMode(button_rec[i], INPUT_PULLUP);
+  tft.begin(40000000);
+  print_grid();
+  print_info();
+}
+
+void loop(void) {
+  int b = input_button();
+  if (b == LEVEL_BUTTON && !level_last_pressed) {
+    ++raw_level;
+    raw_level %= MAX_LEVEL * 2;
+    print_grid();
+    print_info();
+    delay(100);
+  }
+  level_last_pressed = b == LEVEL_BUTTON;
+  if (b == SET_BUTTON) {
+    play();
+    print_grid();
+    print_info();
   }
 }
