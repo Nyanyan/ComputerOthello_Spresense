@@ -366,6 +366,8 @@ void print_discs(Board *board, int player);
 void print_legal(Board *board);
 void print_board(Board *board, int player);
 void print_score(Board *board, int player);
+void show_score(Board *board, int player);
+int ai(Board *board);
 
 void print_grid() {
   tft.fillScreen(ILI9341_DARKGREEN);
@@ -489,8 +491,7 @@ void print_board(Board *board, int player) {
   print_grid();
   print_discs(board, player);
   print_legal(board);
-  if (input_button() == SCORE_BUTTON)
-    print_score(board, player);
+  print_score(board, player);
   print_info();
 }
 
@@ -547,10 +548,25 @@ int input_pos(uint64_t legal, int player) {
         }
         b = input_button();
       }
+      blink_place(pos, false, player);
       return pos;
     }
   }
   return -1;
+}
+
+void show_score(Board *board, int player) {
+  if (input_button() == SCORE_BUTTON) {
+    print_board(board, player);
+    print_score(board, player);
+    while (input_button() == SCORE_BUTTON);
+    print_board(board, player);
+  }
+}
+
+int ai(Board *board) {
+  uint64_t legal = board->get_legal();
+  return pop_count_ull((legal & -legal) - 1);
 }
 
 void play() {
@@ -566,26 +582,63 @@ void play() {
   while (true) {
     legal = board.get_legal();
     if (legal == 0) {
-      board.pass();
-      player ^= 1;
-      legal = board.get_legal();
-      if (legal == 0){
-        player ^= 1;
+      if (pop_count_ull(board.player | board.opponent) == HW2)
         break;
+      if (player != ai_player) {
+        Serial.println("user have to pass");
+        while (input_button() != PASS_BUTTON);
+        board.pass();
+        player ^= 1;
+        board.print();
+        print_board(&board, player);
+        legal = board.get_legal();
+        if (legal == 0) {
+          Serial.println("AI have to pass");
+          board.pass();
+          player ^= 1;
+          board.print();
+          break;
+        }
+      } else {
+        Serial.println("AI have to pass");
+        board.pass();
+        player ^= 1;
+        board.print();
+        print_board(&board, player);
+        legal = board.get_legal();
+        if (legal == 0) {
+          Serial.println("user have to pass");
+          //while (input_button() != PASS_BUTTON);
+          board.pass();
+          player ^= 1;
+          board.print();
+          break;
+        }
       }
     }
-    pos = -1;
-    while (pos == -1)
-      pos = input_pos(legal, player);
+    Serial.print("player: ");
+    Serial.print(player);
+    Serial.print(" AI is ");
+    Serial.println(ai_player);
+    print_board(&board, player);
+    if (player == ai_player) {
+      pos = ai(&board);
+    } else {
+      pos = -1;
+      while (pos == -1)
+        pos = input_pos(legal, player);
+    }
     Serial.print("select: ");
     Serial.println(pos);
     flip.calc_flip(board.player, board.opponent, pos);
     board.move_board(&flip);
     board.print();
     player ^= 1;
-    print_board(&board, player);
   }
-  delay(1000);
+  print_board(&board, player);
+  Serial.println("finished");
+  while (input_button() != SET_BUTTON);
+  Serial.println("back to menu");
 }
 
 void setup() {
@@ -614,5 +667,6 @@ void loop(void) {
     play();
     print_grid();
     print_info();
+    delay(300);
   }
 }

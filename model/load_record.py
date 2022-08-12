@@ -183,7 +183,21 @@ def collect_data(num, s):
             #evaluate.stdin.flush()
             #add_data = evaluate.stdout.readline().decode().replace('\r\n', '')
             #if idx >= 24:
-            grids.append(grid_str.replace('\n', '') + ' ' + str(rv.player))
+            img0 = Image.new("L", (64, 64), 0)
+            img1 = Image.new("L", (64, 64), 0)
+            for i in range(hw):
+                for j in range(hw):
+                    if rv.grid[i][j] == 0:
+                        if rv.player == 0:
+                            img0.putpixel((j, i), 255)
+                        else:
+                            img1.putpixel((j, i), 255)
+                    elif rv.grid[i][j] == 1:
+                        if rv.player == 1:
+                            img0.putpixel((j, i), 255)
+                        else:
+                            img1.putpixel((j, i), 255)
+            grids.append([img0, img1, rv.player, y * 8 + x])
             #grids.append(grid_str.replace('\n', '') + ' ' + str(rv.player) + ' ' + add_data)
         if rv.move(y, x):
             print('error')
@@ -200,15 +214,19 @@ def collect_data(num, s):
         result += 64 - sum(rv.nums)
     elif result < 0:
         result -= 64 - sum(rv.nums)
-    score = 1 if result > 0 else -1 if result < 0 else 0
-    with open('data/' + digit(num, 7) + '.txt', 'a') as f:
-        for grid in grids:
-            f.write(grid + ' ' + str(result) + '\n')
-
+    idx = 0
+    with open('data/data.csv', 'a') as f:
+        for img0, img1, player, policy in grids:
+            file0 = './data/img/' + digit(num, 7) + '_' + digit(idx, 2) + '_0.png'
+            file1 = './data/img/' + digit(num, 7) + '_' + digit(idx, 2) + '_1.png'
+            f.write(file0 + ',' + file1 + ',' + str(policy) + ',' + str(result / 64 if player == 0 else -result / 64) + '\n')
+            img0.save(file0)
+            img1.save(file1)
+            idx += 1
 
 games = []
 
-for i in range(0, 1):
+for i in range(55, 56):
     raw_data = ''
     with open('data/raw/' + digit(i, 7) + '.txt', 'r') as f:
         raw_data = f.read()
