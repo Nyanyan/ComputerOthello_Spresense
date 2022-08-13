@@ -274,6 +274,7 @@ class Board {
         if (i % HW == 0)
           Serial.println("");
       }
+      Serial.println("");
     }
 
     inline uint64_t get_legal() {
@@ -387,7 +388,7 @@ void print_board(Board *board, int player);
 void print_score(Board *board, int player);
 void show_score(Board *board, int player);
 void predict(Board *board, int player, float policies[HW2], float *value);
-int ai(Board *board, int level);
+int ai(Board *board, int level, float *res_value);
 
 void print_grid() {
   tft.fillScreen(ILI9341_DARKGREEN);
@@ -496,15 +497,34 @@ void print_info() {
   int ai_player = raw_level % 2;
   tft.setTextSize(1);
   tft.setTextColor(ILI9341_BLACK);
-  tft.setCursor(70, 15);
+  tft.setCursor(60, 15);
   tft.print("Level ");
-  tft.setCursor(70 + FONT_PX * 6, 15);
+  tft.setCursor(60 + FONT_PX * 6, 15);
   tft.print((char)('1' + level));
-  tft.setCursor(70, 25);
+  tft.setCursor(60, 25);
   if (ai_player == 0)
     tft.print("AI plays Black");
   else
     tft.print("AI plays White");
+}
+
+void print_value(float value, bool show_flag) {
+  if (show_flag) {
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_BLACK);
+    tft.setCursor(120, 15);
+    tft.print("Value ");
+    tft.setCursor(120 + FONT_PX * 6, 15);
+    tft.print((String)value);
+  } else
+    tft.fillRect(120, 15, FONT_PX * 11, 10, ILI9341_DARKGREEN);
+}
+
+void print_player(int player) {
+  if (player == 0)
+    tft.drawRoundRect(23, 16, 23, 15, 1, ILI9341_BLACK);
+  else
+    tft.drawRoundRect(191, 16, 23, 15, 1, ILI9341_WHITE);
 }
 
 void print_board(Board *board, int player) {
@@ -535,12 +555,18 @@ int y_button_pressed() {
 
 int get_pos_button() {
   int x = -1, y = -1;
-  while (x < 0)
+  while (x == -1)
     x = x_button_pressed();
-  while (y < 0)
-    y = y_button_pressed();
-  if (x < 0 || y < 0)
+  if (x < 0)
     return -1;
+  while (x_button_pressed() >= 0);
+  delay(50);
+  while (y == -1)
+    y = y_button_pressed();
+  if (y < 0)
+    return -1;
+  while (y_button_pressed() >= 0);
+  delay(50);
   return HW2_M1 - (y * HW + x);
 }
 
@@ -594,30 +620,15 @@ void predict(Board *board, int player, float policies[HW2], float *value) {
   float* buf1 = input1.data();
   for (i = 0; i < HW2; ++i)
     buf1[HW2_M1 - i] = FILLED * (1 & (board->opponent >> i));
-  /*
-    for (i = 0; i < HW2; ++i)
-    Serial.print((int)buf0[i]);
-    Serial.println("");
-    for (i = 0; i < HW2; ++i)
-    Serial.print((int)buf1[i]);
-    Serial.println("");
-  */
   dnnrt.inputVariable(input0, 0);
   dnnrt.inputVariable(input1, 1);
   dnnrt.forward();
   DNNVariable output0 = dnnrt.outputVariable(0);
   DNNVariable output1 = dnnrt.outputVariable(1);
-  //board->print();
   for (i = 0; i < HW2; ++i) {
-    /*
-      Serial.print(i);
-      Serial.print("\t");
-      Serial.println(output0[HW2_M1 - i]);
-    */
     policies[i] = output0[HW2_M1 - i];
   }
-  *value = (player == 0 ? -1.0 : 1.0) * output1[0];
-  //Serial.println(*value);
+  *value = output1[0];
 }
 
 struct MCTS_node {
@@ -628,6 +639,7 @@ struct MCTS_node {
   int player;
   MCTS_node* children[HW2];
   bool has_child;
+  bool is_terminal;
 
   void init() {
     p = -1;
@@ -637,6 +649,7 @@ struct MCTS_node {
     for (int i = 0; i < HW2; ++i)
       children[i] = NULL;
     has_child = false;
+    is_terminal = false;
   }
 };
 
@@ -646,16 +659,27 @@ MCTS_node mcts_nodes[MAX_N_NODES];
 int mcts_n_nodes;
 
 float evaluate(MCTS_node *node) {
-  //node->board.print();
+  if (node->is_terminal) {
+    int score = node->board.score_player();
+    float res = score > 0 ? 1.0 : (score < 0 ? -1.0 : 0.0);
+    node->w += res;
+    ++node->n;
+    node->is_terminal = true;
+    return res;
+  }
   uint64_t legal = node->board.get_legal();
   if (legal == 0) {
     node->board.pass();
     node->player ^= 1;
     legal = node->board.get_legal();
     if (legal == 0) {
-      float res = (float)node->board.score_player() / HW2;
+      node->board.pass();
+      node->player ^= 1;
+      int score = node->board.score_player();
+      float res = score > 0 ? 1.0 : (score < 0 ? -1.0 : 0.0);
       node->w += res;
       ++node->n;
+      node->is_terminal = true;
       return res;
     }
   }
@@ -667,25 +691,17 @@ float evaluate(MCTS_node *node) {
     ++node->n;
     int i;
     Flip flip;
-    //node->board.print();
-    //Serial.println(value);
     for (i = 0; i < HW2; ++i) {
       if (1 & (legal >> i)) {
-        //Serial.print(i);
-        //Serial.print("\t");
-        //Serial.println(policies[i]);
         flip.calc_flip(node->board.player, node->board.opponent, i);
-        node->board.move_board(&flip);
-
         mcts_nodes[mcts_n_nodes].init();
-        mcts_nodes[mcts_n_nodes].board.player = node->board.player;
-        mcts_nodes[mcts_n_nodes].board.opponent = node->board.opponent;
+        mcts_nodes[mcts_n_nodes].board = node->board.move_copy(&flip);
+        //mcts_nodes[mcts_n_nodes].board.player = node->board.player;
+        //mcts_nodes[mcts_n_nodes].board.opponent = node->board.opponent;
         mcts_nodes[mcts_n_nodes].p = policies[i];
         mcts_nodes[mcts_n_nodes].player = node->player ^ 1;
         node->children[i] = &mcts_nodes[mcts_n_nodes];
         ++mcts_n_nodes;
-
-        node->board.undo_board(&flip);
       }
     }
     node->has_child = true;
@@ -696,55 +712,57 @@ float evaluate(MCTS_node *node) {
   float max_value = -10000.0, value;
   int policy = -1;
   int i;
-  float t = 0;
-  for (i = 0; i < HW2; ++i) {
-    if (node->children[i] != NULL)
-      t += (float)node->children[i]->n;
-  }
-  t = sqrt(t);
+  float t = sqrt((float)node->n);
   for (i = 0; i < HW2; ++i) {
     if (node->children[i] != NULL) {
-      if (node->children[i]->n == 0)
-        value = 10000.0;
-      else
-        value = (node->children[i]->player == node->player ? 1.0 : -1.0) * node->children[i]->w / node->children[i]->n +
-                node->children[i]->p * t / (1 + node->children[i]->n);
+      value = node->children[i]->p * t / (1 + node->children[i]->n);
+      if (node->children[i]->n > 0)
+        value += (node->children[i]->player == node->player ? 1.0 : -1.0) * node->children[i]->w / node->children[i]->n;
       if (max_value < value) {
         max_value = value;
         policy = i;
       }
     }
   }
-  value = (node->children[policy]->player == node->player ? 1.0 : -1.0) * evaluate(node->children[policy]);
+  value = evaluate(node->children[policy]);
+  value *= node->children[policy]->player == node->player ? 1.0 : -1.0;
   node->w += value;
   ++node->n;
   return value;
 }
 
-int ai(Board *board, int level) {
+int ai(Board *board, int level, float *res_value) {
   mcts_nodes[0].init();
   mcts_nodes[0].board.player = board->player;
   mcts_nodes[0].board.opponent = board->opponent;
   mcts_nodes[0].player = 0;
   mcts_n_nodes = 1;
-  int n_evaluate = 1000, i;
+  int n_evaluate, i;
+  if (level == 0)
+    n_evaluate = 10;
+  else if (level == 1)
+    n_evaluate = 100;
+  else
+    n_evaluate = 500;
   for (i = 0; i < n_evaluate && mcts_n_nodes < MAX_N_NODES - 34; ++i) {
-    //Serial.println(i);
     evaluate(&mcts_nodes[0]);
   }
+  Serial.print(i);
+  Serial.println(" times evaluated");
   Serial.print(mcts_n_nodes);
   Serial.println(" nodes expanded");
   int max_n = -1;
   int policy = -1;
   for (i = 0; i < HW2; ++i) {
     if (mcts_nodes[0].children[i] != NULL) {
+      print_coord(i);
+      Serial.print("\t");
+      Serial.print(mcts_nodes[0].children[i]->n);
+      Serial.print("\t");
+      Serial.print((mcts_nodes[0].children[i]->player == mcts_nodes[0].player ? 1.0 : -1.0) * mcts_nodes[0].children[i]->w / mcts_nodes[0].children[i]->n);
+      Serial.print("\t");
+      Serial.println(mcts_nodes[0].children[i]->p);
       if (mcts_nodes[0].children[i]->n > max_n) {
-        //Serial.print(i);
-        print_coord(i);
-        Serial.print("\t");
-        Serial.print(mcts_nodes[0].children[i]->n);
-        Serial.print("\t");
-        Serial.println(mcts_nodes[0].children[i]->w / mcts_nodes[0].children[i]->n * HW2);
         max_n = mcts_nodes[0].children[i]->n;
         policy = i;
       }
@@ -755,7 +773,8 @@ int ai(Board *board, int level) {
   Serial.print("\t");
   Serial.print(mcts_nodes[0].children[policy]->n);
   Serial.print("\t");
-  Serial.println(mcts_nodes[0].children[policy]->w / mcts_nodes[0].children[policy]->n * HW2);
+  Serial.println((mcts_nodes[0].children[policy]->player == mcts_nodes[0].player ? 1.0 : -1.0) * mcts_nodes[0].children[policy]->w / mcts_nodes[0].children[policy]->n);
+  *res_value = (mcts_nodes[0].children[policy]->player == mcts_nodes[0].player ? 1.0 : -1.0) * mcts_nodes[0].children[policy]->w / mcts_nodes[0].children[policy]->n;
   return policy;
 }
 
@@ -769,6 +788,8 @@ void play() {
   uint64_t legal;
   int pos;
   Flip flip;
+  float value = 0.0;
+  bool show_value = false;
   while (true) {
     legal = board.get_legal();
     if (legal == 0) {
@@ -776,6 +797,7 @@ void play() {
         break;
       if (player != ai_player) {
         Serial.println("user have to pass");
+        print_player(player);
         while (input_button() != PASS_BUTTON);
         board.pass();
         player ^= 1;
@@ -789,6 +811,7 @@ void play() {
           board.print();
           break;
         }
+        print_board(&board, player);
       } else {
         Serial.println("AI have to pass");
         board.pass();
@@ -810,13 +833,27 @@ void play() {
     Serial.print(player);
     Serial.print(" AI is ");
     Serial.println(ai_player);
-    print_board(&board, player);
+    print_player(player);
+    show_value = false;
     if (player == ai_player) {
-      pos = ai(&board, level);
+      pos = ai(&board, level, &value);
     } else {
       pos = -1;
-      while (pos == -1)
+      bool score_button_pressed = false;
+      while (pos == -1) {
+        if (input_button() == SCORE_BUTTON) {
+          if (!score_button_pressed) {
+            show_value = !show_value;
+            score_button_pressed = true;
+            Serial.print("score button pressed ");
+            Serial.println(show_value);
+            print_value(value, show_value);
+            delay(100);
+          }
+        } else
+          score_button_pressed = false;
         pos = input_pos(legal, player);
+      }
     }
     Serial.print("select: ");
     //Serial.println(pos);
@@ -824,8 +861,9 @@ void play() {
     Serial.println("\n");
     flip.calc_flip(board.player, board.opponent, pos);
     board.move_board(&flip);
-    board.print();
     player ^= 1;
+    print_board(&board, player);
+    board.print();
   }
   print_board(&board, player);
   Serial.println("finished");

@@ -33,7 +33,7 @@ Position_3=48
 Property_0_Name=Name
 Property_0_Value=Convolution
 Property_1_Name=OutMaps
-Property_1_Value=16
+Property_1_Value=32
 Property_2_Name=KernelShape
 Property_2_Value=3,3
 Property_3_Name=BorderMode
@@ -330,14 +330,14 @@ URI=C:\github\othello\ComputerOthello_Spresense\model\data\data.csv
 Shuffle=1
 EnableCache=0
 ImageNormalization=1
-NumData=80009
+NumData=88129
 [Dataset_1]
 Name=Validation
 URI=C:\github\othello\ComputerOthello_Spresense\model\data\data_val.csv
 Shuffle=0
 EnableCache=0
 ImageNormalization=1
-NumData=36681
+NumData=24749
 [Description]
 Text=
 [Config]
